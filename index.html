@@ -327,6 +327,24 @@
                     </div>
                 </div>
 
+                <!-- ASSINATURA ELETRÔNICA DO SOLICITANTE -->
+                <div class="border-t border-slate-100 pt-6 space-y-3">
+                    <h3 class="text-xs font-bold text-blue-800 uppercase tracking-wider flex items-center gap-2" style="color: #1E3A8A;">
+                        <i class="fa-solid fa-signature"></i> Assinatura Eletrônica do Solicitante <span class="text-rose-500">*</span>
+                    </h3>
+                    <p class="text-[11px] text-slate-500 leading-relaxed">
+                        Desenhe sua assinatura no campo abaixo (com o mouse ou o dedo, se estiver no celular/tablet). Ela será inserida automaticamente no PDF oficial do cadastro.
+                    </p>
+                    <div class="border-2 border-dashed border-slate-300 rounded-xl bg-slate-50 overflow-hidden">
+                        <canvas id="assinatura_canvas" class="w-full touch-none cursor-crosshair bg-white" height="140"></canvas>
+                    </div>
+                    <div class="flex justify-end">
+                        <button type="button" onclick="limparAssinatura()" class="text-[11px] font-bold text-slate-500 hover:text-rose-600 flex items-center gap-1.5 transition-all">
+                            <i class="fa-solid fa-eraser"></i> Limpar Assinatura
+                        </button>
+                    </div>
+                </div>
+
                 <!-- SUBMIT BUTTONS -->
                 <div class="space-y-3">
                     <button type="submit" id="btn_submit_workflow" class="w-full hover:bg-blue-900 text-white font-semibold py-3 px-4 rounded-xl shadow-lg transition-all flex items-center justify-center gap-2" style="background-color: #1E3A8A;">
@@ -516,6 +534,7 @@
                     <div class="mt-8 space-y-6">
                         <div class="grid grid-cols-2 gap-8">
                             <div class="text-center">
+                                <img id="p_assinatura_img" src="" class="hidden mx-auto h-10 object-contain mb-1" alt="Assinatura do Solicitante">
                                 <hr class="border-slate-300 mb-1.5">
                                 <p class="text-[8px] font-bold text-slate-800">Assinatura do Solicitante</p>
                             </div>
@@ -795,6 +814,84 @@
         let bancoItens = [];
         let scriptSheetsUrl = localStorage.getItem('chb_script_sheets_url') || "";
 
+        // ASSINATURA ELETRÔNICA DO SOLICITANTE (CANVAS)
+        let assinaturaCtx = null;
+        let assinaturaDesenhando = false;
+        let assinaturaTemTraco = false;
+
+        function initAssinaturaCanvas() {
+            const canvas = document.getElementById('assinatura_canvas');
+            if (!canvas) return;
+
+            const ratio = window.devicePixelRatio || 1;
+            const largura = canvas.clientWidth;
+            canvas.width = largura * ratio;
+            canvas.height = 140 * ratio;
+
+            assinaturaCtx = canvas.getContext('2d');
+            assinaturaCtx.scale(ratio, ratio);
+            assinaturaCtx.strokeStyle = '#1e293b';
+            assinaturaCtx.lineWidth = 2;
+            assinaturaCtx.lineCap = 'round';
+            assinaturaCtx.lineJoin = 'round';
+
+            const pegarPos = (e) => {
+                const rect = canvas.getBoundingClientRect();
+                const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+                const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+                return { x: clientX - rect.left, y: clientY - rect.top };
+            };
+
+            const iniciar = (e) => {
+                assinaturaDesenhando = true;
+                const pos = pegarPos(e);
+                assinaturaCtx.beginPath();
+                assinaturaCtx.moveTo(pos.x, pos.y);
+                e.preventDefault();
+            };
+            const desenhar = (e) => {
+                if (!assinaturaDesenhando) return;
+                const pos = pegarPos(e);
+                assinaturaCtx.lineTo(pos.x, pos.y);
+                assinaturaCtx.stroke();
+                assinaturaTemTraco = true;
+                e.preventDefault();
+            };
+            const finalizar = () => { assinaturaDesenhando = false; };
+
+            canvas.addEventListener('mousedown', iniciar);
+            canvas.addEventListener('mousemove', desenhar);
+            canvas.addEventListener('mouseup', finalizar);
+            canvas.addEventListener('mouseleave', finalizar);
+            canvas.addEventListener('touchstart', iniciar, { passive: false });
+            canvas.addEventListener('touchmove', desenhar, { passive: false });
+            canvas.addEventListener('touchend', finalizar);
+        }
+
+        function limparAssinatura() {
+            const canvas = document.getElementById('assinatura_canvas');
+            if (!canvas || !assinaturaCtx) return;
+            assinaturaCtx.clearRect(0, 0, canvas.width, canvas.height);
+            assinaturaTemTraco = false;
+            document.getElementById('p_assinatura_img').classList.add('hidden');
+        }
+
+        function capturarAssinaturaDataURL() {
+            if (!assinaturaTemTraco) return null;
+            const canvas = document.getElementById('assinatura_canvas');
+            return canvas.toDataURL('image/png');
+        }
+
+        function aplicarAssinaturaNoPreview(dataUrl) {
+            const img = document.getElementById('p_assinatura_img');
+            if (dataUrl) {
+                img.src = dataUrl;
+                img.classList.remove('hidden');
+            } else {
+                img.classList.add('hidden');
+            }
+        }
+
         window.onload = function() {
             const localHist = localStorage.getItem('chb_db_itens');
             if (localHist) {
@@ -806,6 +903,7 @@
             
             setTimeout(sincronizarComFirestore, 1500);
             
+            initAssinaturaCanvas();
             atualizarPreview();
             renderDatabase();
         }
@@ -941,7 +1039,72 @@
             }
         }
 
-        // DISPARO DE WORKFLOW DE E-MAILS (FormSubmit)
+        // CONVERTE UM BLOB (PDF) EM BASE64 PURO, PARA ENVIO COMO ANEXO
+        function blobParaBase64(blob) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve(reader.result.split(',')[1]);
+                reader.onerror = reject;
+                reader.readAsDataURL(blob);
+            });
+        }
+
+        // MONTA O CORPO HTML DO E-MAIL NO PADRÃO VISUAL GRUPO CHB
+        function montarHtmlEmail(dados, statusMsg, introMsg) {
+            return `
+            <div style="font-family: Arial, Helvetica, sans-serif; max-width: 600px; margin:0 auto; background:#ffffff; border:1px solid #e2e8f0;">
+              <div style="background-color:#1E3A8A; padding:20px 24px;">
+                <h1 style="margin:0; color:#fff; font-size:22px; font-weight:800;">GRUPO CHB</h1>
+                <p style="margin:4px 0 0; color:#cbd5e1; font-size:12px; letter-spacing:.5px; text-transform:uppercase;">Fila de Cadastro Técnico ERP</p>
+              </div>
+              <div style="padding:24px;">
+                <p style="font-size:14px; color:#334155; line-height:1.6;">${introMsg}</p>
+                <div style="background:#f8fafc; border-left:4px solid #1E3A8A; border-radius:6px; padding:16px 18px; margin:20px 0;">
+                  <h2 style="margin:0 0 12px; font-size:14px; color:#1E3A8A; font-weight:800;">Resumo do Registro Técnico</h2>
+                  <p style="margin:6px 0; font-size:13px; color:#1e293b;"><strong>Chamado:</strong> ${dados.id}</p>
+                  <p style="margin:6px 0; font-size:13px; color:#1e293b;"><strong>Solicitante:</strong> ${dados.sol_nome} (${dados.sol_unidade})</p>
+                  <p style="margin:6px 0; font-size:13px; color:#1e293b;"><strong>Código do Item:</strong> ${dados.peca_codigo} | <strong>Marca:</strong> ${dados.peca_marca}</p>
+                  <p style="margin:6px 0; font-size:13px; color:#1e293b;"><strong>Prazo:</strong> ${dados.peca_prazo}</p>
+                  <p style="margin:6px 0; font-size:13px; color:#1e293b;"><strong>Descrição:</strong> ${dados.peca_descricao}</p>
+                  <p style="margin:6px 0; font-size:13px; color:#1e293b;"><strong>Sistemas:</strong> SYS: ${dados.dest_sys} | TRACTIAN: ${dados.dest_trac} | IOB: ${dados.dest_iob}</p>
+                  <p style="margin:10px 0 0; font-size:13px; color:#1E3A8A;"><strong>Status Atual:</strong> ${statusMsg}</p>
+                </div>
+                <p style="font-size:11px; color:#94a3b8; text-align:center;">O PDF oficial do cadastro, já assinado eletronicamente pelo solicitante, segue anexado a este e-mail.</p>
+              </div>
+              <div style="background:#f1f5f9; padding:14px 24px; text-align:center;">
+                <p style="margin:0; font-size:10px; color:#94a3b8;">Este é um e-mail automático gerado pelo Assistente de Cadastros Grupo CHB ERP. Não responda diretamente a esta mensagem.</p>
+              </div>
+            </div>`;
+        }
+
+        // ENVIA O E-MAIL FORMATADO (COM PDF ANEXADO) VIA FUNÇÃO SERVERLESS DO NETLIFY
+        async function enviarEmailFormatado(destinatario, assunto, statusMsg, introMsg, dados, pdfBlob, pdfNome) {
+            const htmlBody = montarHtmlEmail(dados, statusMsg, introMsg);
+            const pdfBase64 = pdfBlob ? await blobParaBase64(pdfBlob) : null;
+
+            try {
+                const response = await fetch('/.netlify/functions/enviar-email', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ destinatario, assunto, htmlBody, pdfBase64, pdfNome })
+                });
+
+                const result = await response.json().catch(() => ({}));
+
+                if (!response.ok || !result.success) {
+                    console.error('[E-MAIL] Falha no envio:', result);
+                    exibirToast("Falha no envio", `Não foi possível enviar o e-mail para ${destinatario}. Verifique a configuração da função de e-mail (Resend/Netlify).`, "warning");
+                    return false;
+                }
+                return true;
+            } catch (error) {
+                console.error('[E-MAIL] Erro de rede ao contatar a função serverless:', error);
+                exibirToast("Falha no envio", `Não foi possível contatar o serviço de e-mail para ${destinatario}.`, "warning");
+                return false;
+            }
+        }
+
+        // DISPARO DE WORKFLOW DE E-MAILS (FormSubmit) — mantido como alternativa/fallback
         // anexoBlob/anexoNome (opcionais): quando informados, o PDF do cadastro é anexado ao e-mail (multipart/form-data)
         async function dispararEmail(destinatario, assunto, dados, anexoBlob = null, anexoNome = 'Cadastro_CHB.pdf') {
             // Aviso: FormSubmit exige que a página seja servida via http(s)://
@@ -1089,6 +1252,13 @@ Consulte os detalhes completos e homologue o cadastro pelo e-mail recebido.`;
         async function handleSubmissao(event) {
             event.preventDefault();
 
+            const assinaturaDataUrl = capturarAssinaturaDataURL();
+            if (!assinaturaDataUrl) {
+                exibirToast("Assinatura obrigatória", "Desenhe sua assinatura no campo indicado antes de submeter o cadastro.", "warning");
+                document.getElementById('assinatura_canvas').scrollIntoView({ behavior: 'smooth', block: 'center' });
+                return;
+            }
+
             const timestamp = new Date().toLocaleString('pt-BR');
             document.getElementById('data_registro_display').innerText = timestamp;
             document.getElementById('p_data_registro').innerText = timestamp;
@@ -1119,6 +1289,7 @@ Consulte os detalhes completos e homologue o cadastro pelo e-mail recebido.`;
                 peca_obs: document.getElementById('peca_obs').value || "Nenhuma",
                 whats_ativo: document.getElementById('whats_ativo').checked,
                 whats_numero: document.getElementById('whats_ativo').checked ? document.getElementById('whats_numero').value.trim() : "",
+                assinatura_dataurl: assinaturaDataUrl,
                 data_registro: timestamp,
                 status: "SUBMETIDO",
                 feedback_inconsistencia: "",
@@ -1139,6 +1310,7 @@ Consulte os detalhes completos e homologue o cadastro pelo e-mail recebido.`;
             exibirToast("Processando Workflow", "Gerando PDF do cadastro e enviando por e-mail...", "info");
 
             // Gera o PDF oficial do cadastro para anexar ao e-mail de solicitação
+            aplicarAssinaturaNoPreview(dados.assinatura_dataurl);
             atualizarPreview();
             const pdfBlob = await gerarPdfBlob();
             const pdfNome = `CHB_Cadastro_${dados.peca_codigo}.pdf`;
@@ -1146,19 +1318,23 @@ Consulte os detalhes completos e homologue o cadastro pelo e-mail recebido.`;
                 addLog("Não foi possível gerar o PDF automaticamente; e-mails seguiram sem anexo.", "warning");
             }
 
-            // Email 1: Ao Solicitante informando abertura, com o PDF do cadastro anexado
-            const okSol = await dispararEmail(dados.sol_email, `[Grupo CHB] Cadastro de Item ERP Iniciado - ${dados.peca_codigo}`, {
-                "CÓDIGO_CHAMADO": dados.id,
-                "STATUS_ATUAL": "Aguardando análise técnica pelo Cadastrante",
-                ...dados
-            }, pdfBlob, pdfNome);
+            // Email 1: Ao Solicitante informando abertura, com o PDF assinado anexado
+            const okSol = await enviarEmailFormatado(
+                dados.sol_email,
+                `[Grupo CHB] Cadastro de Item ERP Iniciado - ${dados.peca_codigo}`,
+                "Aguardando análise técnica pelo Cadastrante",
+                "Sua solicitação de cadastro técnico de item ERP foi registrada com sucesso e está sendo encaminhada para a análise do Cadastrante responsável.",
+                dados, pdfBlob, pdfNome
+            );
 
             // Email 2: Ao Cadastrante requerendo análise, também com o PDF anexado
-            const okCad = await dispararEmail(dados.cad_email, `[Grupo CHB] AÇÃO REQUERIDA: Cadastro de Item ERP - ${dados.peca_codigo}`, {
-                "CÓDIGO_CHAMADO": dados.id,
-                "STATUS_ATUAL": "Ação pendente: Homologar especificações técnicas e registrar no ERP",
-                ...dados
-            }, pdfBlob, pdfNome);
+            const okCad = await enviarEmailFormatado(
+                dados.cad_email,
+                `[Grupo CHB] AÇÃO REQUERIDA: Cadastro de Item ERP - ${dados.peca_codigo}`,
+                "Ação pendente: Homologar especificações técnicas e registrar no ERP",
+                "Uma nova solicitação de cadastro técnico de item ERP aguarda sua análise e homologação no sistema.",
+                dados, pdfBlob, pdfNome
+            );
 
             if (okSol && okCad) {
                 addLog("E-mails de abertura enviados ao Solicitante e Cadastrante, com o PDF do cadastro anexado.", "success");
@@ -1195,11 +1371,16 @@ Consulte os detalhes completos e homologue o cadastro pelo e-mail recebido.`;
             addLog("Cadastrante confirmou recebimento e iniciou a conferência técnica.", "info");
 
             exibirToast("Workflow Notificado", "Disparando e-mail de processamento ao Solicitante...", "info");
-            const okRecebimento = await dispararEmail(cadastroAtivo.sol_email, `[Grupo CHB] Chamado em Análise ERP: Recebimento Confirmado - ${cadastroAtivo.peca_codigo}`, {
-                "CÓDIGO_CHAMADO": cadastroAtivo.id,
-                "STATUS_ATUAL": `Item em processamento sob análise técnica de ${cadastroAtivo.cad_email}`,
-                ...cadastroAtivo
-            });
+            aplicarAssinaturaNoPreview(cadastroAtivo.assinatura_dataurl);
+            atualizarPreview();
+            const pdfRecebimento = await gerarPdfBlob();
+            const okRecebimento = await enviarEmailFormatado(
+                cadastroAtivo.sol_email,
+                `[Grupo CHB] Chamado em Análise ERP: Recebimento Confirmado - ${cadastroAtivo.peca_codigo}`,
+                `Item em processamento sob análise técnica de ${cadastroAtivo.cad_email}`,
+                "O Cadastrante confirmou o recebimento da sua solicitação e iniciou a conferência técnica do item.",
+                cadastroAtivo, pdfRecebimento, `CHB_Cadastro_${cadastroAtivo.peca_codigo}.pdf`
+            );
             addLog(okRecebimento ? "E-mail de confirmação enviado ao Solicitante." : "Falha ao enviar e-mail de confirmação ao Solicitante.", okRecebimento ? "success" : "warning");
 
             salvarEmHistoricoMemoria(cadastroAtivo);
@@ -1228,12 +1409,16 @@ Consulte os detalhes completos e homologue o cadastro pelo e-mail recebido.`;
             closeRecusaModal();
 
             exibirToast("Chamado Devolvido", "Enviando alerta de inconsistência ao solicitante...", "info");
-            const okDevolucao = await dispararEmail(cadastroAtivo.sol_email, `[Grupo CHB] ⚠️ AJUSTE REQUERIDO: Inconsistência no Cadastro - ${cadastroAtivo.peca_codigo}`, {
-                "CÓDIGO_CHAMADO": cadastroAtivo.id,
-                "STATUS_ATUAL": "Ajuste Requerido - Devolvido ao solicitante",
-                "JUSTIFICATIVA_DE_DEVOLUCAO": motivo,
-                ...cadastroAtivo
-            });
+            aplicarAssinaturaNoPreview(cadastroAtivo.assinatura_dataurl);
+            atualizarPreview();
+            const pdfDevolucao = await gerarPdfBlob();
+            const okDevolucao = await enviarEmailFormatado(
+                cadastroAtivo.sol_email,
+                `[Grupo CHB] ⚠️ AJUSTE REQUERIDO: Inconsistência no Cadastro - ${cadastroAtivo.peca_codigo}`,
+                "Ajuste Requerido - Devolvido ao solicitante",
+                `Sua solicitação foi devolvida pelo Cadastrante para ajustes. Justificativa: "${motivo}"`,
+                cadastroAtivo, pdfDevolucao, `CHB_Cadastro_${cadastroAtivo.peca_codigo}.pdf`
+            );
             addLog(okDevolucao ? "E-mail de devolução enviado ao Solicitante." : "Falha ao enviar e-mail de devolução ao Solicitante.", okDevolucao ? "success" : "warning");
 
             if (cadastroAtivo.whats_ativo) {
@@ -1273,6 +1458,10 @@ Consulte os detalhes completos e homologue o cadastro pelo e-mail recebido.`;
             cadastroAtivo.iob_qtd = iobChecked ? document.getElementById('iob_qtd').value : "-";
             cadastroAtivo.iob_filial = iobChecked ? document.getElementById('iob_filial').value : "-";
             cadastroAtivo.peca_obs = document.getElementById('peca_obs').value || "Nenhuma";
+            const novaAssinatura = capturarAssinaturaDataURL();
+            if (novaAssinatura) {
+                cadastroAtivo.assinatura_dataurl = novaAssinatura;
+            }
             cadastroAtivo.status = "SUBMETIDO";
             cadastroAtivo.timestamp_br = timestamp;
 
@@ -1284,15 +1473,19 @@ Consulte os detalhes completos e homologue o cadastro pelo e-mail recebido.`;
             document.getElementById('btn_resubmit_adjustments').classList.add('hidden');
 
             addLog("Ajustes realizados e reenviados ao cadastrante.", "info");
+            aplicarAssinaturaNoPreview(cadastroAtivo.assinatura_dataurl);
             atualizarPreview();
 
             exibirToast("Cadastro Reenviado", "Notificando cadastrante sobre as correções...", "info");
-            
-            const okAjuste = await dispararEmail(cadastroAtivo.cad_email, `[Grupo CHB] AJUSTADO: Cadastro de Item corrigido - ${cadastroAtivo.peca_codigo}`, {
-                "CÓDIGO_CHAMADO": cadastroAtivo.id,
-                "STATUS_ATUAL": "Itens Ajustados - Analisar nova parametrização técnica",
-                ...cadastroAtivo
-            });
+
+            const pdfAjuste = await gerarPdfBlob();
+            const okAjuste = await enviarEmailFormatado(
+                cadastroAtivo.cad_email,
+                `[Grupo CHB] AJUSTADO: Cadastro de Item corrigido - ${cadastroAtivo.peca_codigo}`,
+                "Itens Ajustados - Analisar nova parametrização técnica",
+                "O solicitante realizou os ajustes apontados e reenviou o cadastro para nova análise técnica.",
+                cadastroAtivo, pdfAjuste, `CHB_Cadastro_${cadastroAtivo.peca_codigo}.pdf`
+            );
             addLog(okAjuste ? "E-mail de reenvio ajustado enviado ao Cadastrante." : "Falha ao enviar e-mail de reenvio ao Cadastrante.", okAjuste ? "success" : "warning");
 
             salvarEmHistoricoMemoria(cadastroAtivo);
@@ -1319,11 +1512,16 @@ Consulte os detalhes completos e homologue o cadastro pelo e-mail recebido.`;
             addLog("Item homologado e cadastrado no banco de dados do ERP CHB!", "success");
 
             exibirToast("Finalizando Processo", "Enviando e-mail de conclusão com sucesso...", "info");
-            const okConclusao = await dispararEmail(cadastroAtivo.sol_email, `[Grupo CHB] CONCLUÍDO: Item parametrizado com sucesso - ${cadastroAtivo.peca_codigo}`, {
-                "CÓDIGO_CHAMADO": cadastroAtivo.id,
-                "STATUS_ATUAL": "CADASTRO CONCLUÍDO, HOMOLOGADO E PRONTO PARA USO NO ERP!",
-                ...cadastroAtivo
-            });
+            aplicarAssinaturaNoPreview(cadastroAtivo.assinatura_dataurl);
+            atualizarPreview();
+            const pdfConclusao = await gerarPdfBlob();
+            const okConclusao = await enviarEmailFormatado(
+                cadastroAtivo.sol_email,
+                `[Grupo CHB] CONCLUÍDO: Item parametrizado com sucesso - ${cadastroAtivo.peca_codigo}`,
+                "CADASTRO CONCLUÍDO, HOMOLOGADO E PRONTO PARA USO NO ERP!",
+                "Seu cadastro foi homologado e finalizado com sucesso no ERP do Grupo CHB. Segue em anexo o PDF final do processo.",
+                cadastroAtivo, pdfConclusao, `CHB_Cadastro_${cadastroAtivo.peca_codigo}.pdf`
+            );
             addLog(okConclusao ? "E-mail de conclusão enviado ao Solicitante." : "Falha ao enviar e-mail de conclusão ao Solicitante.", okConclusao ? "success" : "warning");
 
             salvarEmHistoricoMemoria(cadastroAtivo);
@@ -1430,6 +1628,8 @@ Consulte os detalhes completos e homologue o cadastro pelo e-mail recebido.`;
             document.getElementById('whats_ativo').checked = !!item.whats_ativo;
             document.getElementById('whats_numero').value = item.whats_numero || "";
             toggleWhatsappField();
+
+            aplicarAssinaturaNoPreview(item.assinatura_dataurl || null);
 
             document.getElementById('dest_sys').value = item.dest_sys || "SIM";
             document.getElementById('dest_tractian').value = item.dest_trac || "NÃO";
