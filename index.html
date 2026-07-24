@@ -883,13 +883,26 @@
         }
 
         function aplicarAssinaturaNoPreview(dataUrl) {
-            const img = document.getElementById('p_assinatura_img');
-            if (dataUrl) {
-                img.src = dataUrl;
-                img.classList.remove('hidden');
-            } else {
-                img.classList.add('hidden');
-            }
+            return new Promise((resolve) => {
+                const img = document.getElementById('p_assinatura_img');
+                if (dataUrl) {
+                    img.onload = () => resolve();
+                    img.onerror = () => resolve();
+                    img.src = dataUrl;
+                    img.classList.remove('hidden');
+                } else {
+                    img.classList.add('hidden');
+                    resolve();
+                }
+            });
+        }
+
+        // Espera o navegador terminar de pintar as últimas mudanças na tela
+        // (evita capturar o PDF "no meio" de uma atualização, o que gera páginas em branco)
+        function aguardarRenderizacao() {
+            return new Promise(resolve => {
+                requestAnimationFrame(() => requestAnimationFrame(resolve));
+            });
         }
 
         window.onload = function() {
@@ -1310,8 +1323,9 @@ Consulte os detalhes completos e homologue o cadastro pelo e-mail recebido.`;
             exibirToast("Processando Workflow", "Gerando PDF do cadastro e enviando por e-mail...", "info");
 
             // Gera o PDF oficial do cadastro para anexar ao e-mail de solicitação
-            aplicarAssinaturaNoPreview(dados.assinatura_dataurl);
+            await aplicarAssinaturaNoPreview(dados.assinatura_dataurl);
             atualizarPreview();
+            await aguardarRenderizacao();
             const pdfBlob = await gerarPdfBlob();
             const pdfNome = `CHB_Cadastro_${dados.peca_codigo}.pdf`;
             if (!pdfBlob) {
@@ -1371,8 +1385,9 @@ Consulte os detalhes completos e homologue o cadastro pelo e-mail recebido.`;
             addLog("Cadastrante confirmou recebimento e iniciou a conferência técnica.", "info");
 
             exibirToast("Workflow Notificado", "Disparando e-mail de processamento ao Solicitante...", "info");
-            aplicarAssinaturaNoPreview(cadastroAtivo.assinatura_dataurl);
+            await aplicarAssinaturaNoPreview(cadastroAtivo.assinatura_dataurl);
             atualizarPreview();
+            await aguardarRenderizacao();
             const pdfRecebimento = await gerarPdfBlob();
             const okRecebimento = await enviarEmailFormatado(
                 cadastroAtivo.sol_email,
@@ -1409,8 +1424,9 @@ Consulte os detalhes completos e homologue o cadastro pelo e-mail recebido.`;
             closeRecusaModal();
 
             exibirToast("Chamado Devolvido", "Enviando alerta de inconsistência ao solicitante...", "info");
-            aplicarAssinaturaNoPreview(cadastroAtivo.assinatura_dataurl);
+            await aplicarAssinaturaNoPreview(cadastroAtivo.assinatura_dataurl);
             atualizarPreview();
+            await aguardarRenderizacao();
             const pdfDevolucao = await gerarPdfBlob();
             const okDevolucao = await enviarEmailFormatado(
                 cadastroAtivo.sol_email,
@@ -1473,8 +1489,9 @@ Consulte os detalhes completos e homologue o cadastro pelo e-mail recebido.`;
             document.getElementById('btn_resubmit_adjustments').classList.add('hidden');
 
             addLog("Ajustes realizados e reenviados ao cadastrante.", "info");
-            aplicarAssinaturaNoPreview(cadastroAtivo.assinatura_dataurl);
+            await aplicarAssinaturaNoPreview(cadastroAtivo.assinatura_dataurl);
             atualizarPreview();
+            await aguardarRenderizacao();
 
             exibirToast("Cadastro Reenviado", "Notificando cadastrante sobre as correções...", "info");
 
@@ -1512,8 +1529,9 @@ Consulte os detalhes completos e homologue o cadastro pelo e-mail recebido.`;
             addLog("Item homologado e cadastrado no banco de dados do ERP CHB!", "success");
 
             exibirToast("Finalizando Processo", "Enviando e-mail de conclusão com sucesso...", "info");
-            aplicarAssinaturaNoPreview(cadastroAtivo.assinatura_dataurl);
+            await aplicarAssinaturaNoPreview(cadastroAtivo.assinatura_dataurl);
             atualizarPreview();
+            await aguardarRenderizacao();
             const pdfConclusao = await gerarPdfBlob();
             const okConclusao = await enviarEmailFormatado(
                 cadastroAtivo.sol_email,
@@ -1833,6 +1851,14 @@ Consulte os detalhes completos e homologue o cadastro pelo e-mail recebido.`;
         // GERA O PDF DO CADASTRO EM MEMÓRIA (BLOB) PARA ANEXAR AO E-MAIL DE SOLICITAÇÃO
         async function gerarPdfBlob() {
             const element = document.getElementById('pdf-a4-page');
+
+            // Garante que fontes (Google Fonts/FontAwesome) e o layout já terminaram
+            // de carregar/renderizar antes de tirar a "foto" da página.
+            if (document.fonts && document.fonts.ready) {
+                await document.fonts.ready;
+            }
+            await aguardarRenderizacao();
+
             const opt = {
                 margin: 0,
                 image: { type: 'jpeg', quality: 1.0 },
