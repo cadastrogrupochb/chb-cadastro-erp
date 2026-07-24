@@ -647,6 +647,10 @@
                         <i class="fa-solid fa-file-excel"></i>
                         Exportar Histórico (Excel)
                     </button>
+                    <button onclick="limparBancoDeDadosLocal()" class="flex items-center gap-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 px-3.5 py-2 rounded-lg text-xs font-semibold transition-all">
+                        <i class="fa-solid fa-broom"></i>
+                        Limpar Banco de Dados (local)
+                    </button>
                     <div class="relative flex-1 md:w-64">
                         <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400">
                             <i class="fa-solid fa-magnifying-glass text-xs"></i>
@@ -777,7 +781,7 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, setDoc, collection, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, doc, setDoc, collection, getDocs, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         let app, db, auth;
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'grupochb-erp-cadastros';
@@ -806,6 +810,7 @@
         window.firebaseSetDoc = setDoc;
         window.firebaseCollection = collection;
         window.firebaseGetDocs = getDocs;
+        window.firebaseDeleteDoc = deleteDoc;
     </script>
 
     <script>
@@ -1743,6 +1748,43 @@ Consulte os detalhes completos e homologue o cadastro pelo e-mail recebido.`;
             exibirToast("Exportado!", `Histórico com ${bancoItens.length} solicitação(ões) exportado para Excel.`, "success");
         }
 
+        // LIMPA O BANCO DE DADOS INTERNO DO APP (Firestore + navegador)
+        // IMPORTANTE: isso NUNCA apaga nada da planilha do Google Sheets — a planilha é o
+        // histórico permanente e continua recebendo e mantendo TODAS as solicitações,
+        // mesmo depois de limpar aqui.
+        async function limparBancoDeDadosLocal() {
+            if (!bancoItens || bancoItens.length === 0) {
+                exibirToast("Nada para limpar", "O banco de dados local já está vazio.", "warning");
+                return;
+            }
+
+            const confirmado = confirm(
+                "Isso vai limpar a lista de chamados exibida aqui no aplicativo (banco de dados interno / local).\n\n" +
+                "A PLANILHA DO GOOGLE SHEETS NÃO SERÁ AFETADA: todas as solicitações já enviadas continuam " +
+                "salvas lá para sempre, como histórico permanente.\n\n" +
+                "Deseja continuar?"
+            );
+            if (!confirmado) return;
+
+            bancoItens = [];
+            localStorage.removeItem('chb_db_itens');
+            renderDatabase();
+
+            if (window.firebaseDB && window.firebaseCollection && window.firebaseGetDocs && window.firebaseDeleteDoc) {
+                try {
+                    const q = window.firebaseCollection(window.firebaseDB, 'artifacts', window.firebaseAppId, 'public', 'data', 'cadastros');
+                    const snapshot = await window.firebaseGetDocs(q);
+                    for (const docSnap of snapshot.docs) {
+                        await window.firebaseDeleteDoc(docSnap.ref);
+                    }
+                } catch (e) {
+                    console.error("Falha ao limpar base interna (Firestore): ", e);
+                }
+            }
+
+            exibirToast("Banco de dados limpo", "A lista local foi limpa. A planilha do Google Sheets permanece intacta com todo o histórico.", "success");
+        }
+
         function filtrarDatabase() {
             const query = document.getElementById('db-search').value.toLowerCase().trim();
             const statusFilter = document.getElementById('db-filter-status').value;
@@ -1858,11 +1900,14 @@ Consulte os detalhes completos e homologue o cadastro pelo e-mail recebido.`;
                 await document.fonts.ready;
             }
             await aguardarRenderizacao();
+            // Espera extra: o Tailwind (via CDN) injeta os estilos das classes dinamicamente
+            // e pode levar um instante a mais para terminar em conexões/dispositivos mais lentos.
+            await new Promise(resolve => setTimeout(resolve, 400));
 
             const opt = {
                 margin: 0,
                 image: { type: 'jpeg', quality: 1.0 },
-                html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff' },
+                html2canvas: { scale: 2, useCORS: true, allowTaint: true, backgroundColor: '#ffffff', logging: true },
                 jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
             };
             try {
@@ -1871,6 +1916,9 @@ Consulte os detalhes completos e homologue o cadastro pelo e-mail recebido.`;
                 const worker = html2pdf().set(opt).from(element).toPdf();
                 const pdf = await worker.get('pdf');
                 const blob = pdf.output('blob');
+                if (!blob || blob.size < 1000) {
+                    console.warn("PDF gerado parece vazio/pequeno demais (bytes):", blob ? blob.size : 0);
+                }
                 return blob;
             } catch (e) {
                 console.error("Falha ao gerar PDF em memória para anexo: ", e);
