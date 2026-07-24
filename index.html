@@ -1862,11 +1862,15 @@ Consulte os detalhes completos e homologue o cadastro pelo e-mail recebido.`;
             const opt = {
                 margin: 0,
                 image: { type: 'jpeg', quality: 1.0 },
-                html2canvas: { scale: 2, useCORS: true },
+                html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff' },
                 jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
             };
             try {
-                const blob = await html2pdf().set(opt).from(element).outputPdf('blob');
+                // Usamos toPdf() + get('pdf') em vez de outputPdf('blob') diretamente:
+                // esse último tem um bug conhecido que às vezes gera PDFs em branco/corrompidos.
+                const worker = html2pdf().set(opt).from(element).toPdf();
+                const pdf = await worker.get('pdf');
+                const blob = pdf.output('blob');
                 return blob;
             } catch (e) {
                 console.error("Falha ao gerar PDF em memória para anexo: ", e);
