@@ -13,7 +13,7 @@
     <!-- Biblioteca html2pdf para geração física de PDF -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
     <!-- jsPDF carregado de forma independente (garante window.jspdf.jsPDF disponível para geração de PDF sem depender de captura de tela) -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
     <!-- Biblioteca SheetJS (xlsx) para exportação do histórico em Excel -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
@@ -588,17 +588,33 @@
                             <span class="text-xs font-bold text-slate-800">Painel de Decisões do Cadastrante</span>
                             <span class="text-[10px] font-bold text-blue-800" style="color: #1E3A8A;">Mapeamento ERP CHB</span>
                         </div>
+
+                        <!-- BLOQUEIO: só o e-mail do cadastrante informado no chamado pode liberar as ações -->
+                        <div id="cadastrante_gate" class="bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-2">
+                            <p class="text-[11px] text-amber-800 font-semibold flex items-center gap-1.5">
+                                <i class="fa-solid fa-lock"></i>
+                                Ações restritas ao Cadastrante responsável por este chamado
+                            </p>
+                            <div class="flex flex-col sm:flex-row gap-2">
+                                <input type="email" id="cadastrante_verificacao_email" placeholder="Confirme aqui o e-mail do cadastrante deste chamado"
+                                    class="flex-1 text-xs px-3 py-2 rounded-lg border border-amber-200 focus:outline-none focus:ring-2 focus:ring-amber-400">
+                                <button onclick="verificarCadastrante()" class="bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold py-2 px-4 rounded-lg transition-all whitespace-nowrap">
+                                    Desbloquear Ações
+                                </button>
+                            </div>
+                        </div>
+
                         <p class="text-xs text-slate-500 leading-relaxed">
                             Simule a resposta do responsável de cadastros do Grupo CHB para esta requisição:
                         </p>
-                        <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
-                            <button onclick="wfConfirmarRecebimento()" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 text-xs font-bold py-2 px-3 rounded-lg transition-all flex items-center justify-center gap-1.5">
+                        <div id="cadastrante_acoes_container" class="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1 opacity-40 pointer-events-none transition-opacity">
+                            <button id="btn_confirmar_analise" disabled onclick="wfConfirmarRecebimento()" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 text-xs font-bold py-2 px-3 rounded-lg transition-all flex items-center justify-center gap-1.5 disabled:cursor-not-allowed">
                                 <i class="fa-solid fa-hourglass-start"></i> Confirmar Análise
                             </button>
-                            <button onclick="openRecusaModal()" class="bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-xs font-bold py-2 px-3 rounded-lg transition-all flex items-center justify-center gap-1.5">
+                            <button id="btn_apontar_inconsistencia" disabled onclick="openRecusaModal()" class="bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-xs font-bold py-2 px-3 rounded-lg transition-all flex items-center justify-center gap-1.5 disabled:cursor-not-allowed">
                                 <i class="fa-solid fa-triangle-exclamation"></i> Apontar Inconsistência
                             </button>
-                            <button onclick="wfConcluirCadastro()" class="bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-xs font-bold py-2 px-3 rounded-lg transition-all flex items-center justify-center gap-1.5">
+                            <button id="btn_concluir_cadastro" disabled onclick="wfConcluirCadastro()" class="bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-xs font-bold py-2 px-3 rounded-lg transition-all flex items-center justify-center gap-1.5 disabled:cursor-not-allowed">
                                 <i class="fa-solid fa-clipboard-check"></i> Concluir Cadastro
                             </button>
                         </div>
@@ -819,6 +835,7 @@
         // Estado Geral da Sessão
         let cadastroAtivo = null;
         let bancoItens = [];
+        let cadastranteVerificado = false;
         let scriptSheetsUrl = localStorage.getItem('chb_script_sheets_url') || "";
 
         // ASSINATURA ELETRÔNICA DO SOLICITANTE (CANVAS)
@@ -961,6 +978,55 @@
         }
 
         // CONTROLES DE INTERFACE
+        // RESTRIÇÃO DE ACESSO: só o e-mail do cadastrante informado no chamado pode agir
+        function verificarCadastrante() {
+            if (!cadastroAtivo) return;
+
+            const emailDigitado = document.getElementById('cadastrante_verificacao_email').value.trim().toLowerCase();
+            const emailCadastrante = (cadastroAtivo.cad_email || '').trim().toLowerCase();
+
+            if (!emailDigitado) {
+                exibirToast("Informe o e-mail", "Digite o e-mail do cadastrante para liberar as ações.", "warning");
+                return;
+            }
+
+            if (emailDigitado !== emailCadastrante) {
+                exibirToast("Acesso negado", "Este e-mail não corresponde ao cadastrante responsável por este chamado. As ações de análise ficam restritas a ele.", "warning");
+                return;
+            }
+
+            cadastranteVerificado = true;
+            atualizarBloqueioAcoesCadastrante();
+            exibirToast("Acesso liberado", "Ações de análise desbloqueadas para este chamado.", "success");
+        }
+
+        function atualizarBloqueioAcoesCadastrante() {
+            const bloqueado = !cadastranteVerificado;
+
+            ['btn_confirmar_analise', 'btn_apontar_inconsistencia', 'btn_concluir_cadastro'].forEach(id => {
+                const btn = document.getElementById(id);
+                if (btn) btn.disabled = bloqueado;
+            });
+
+            const container = document.getElementById('cadastrante_acoes_container');
+            if (container) {
+                container.classList.toggle('opacity-40', bloqueado);
+                container.classList.toggle('pointer-events-none', bloqueado);
+            }
+
+            const gate = document.getElementById('cadastrante_gate');
+            if (gate) gate.classList.toggle('hidden', !bloqueado);
+        }
+
+        // Segunda camada de proteção: mesmo que alguém tente chamar a função direto, ela verifica de novo
+        function acessoCadastranteLiberado() {
+            if (!cadastranteVerificado) {
+                exibirToast("Acesso restrito", "Apenas o cadastrante responsável (e-mail informado neste chamado) pode executar esta ação.", "warning");
+                return false;
+            }
+            return true;
+        }
+
         function openConfigModal() {
             document.getElementById('config-modal').classList.remove('hidden');
         }
@@ -968,6 +1034,7 @@
             document.getElementById('config-modal').classList.add('hidden');
         }
         function openRecusaModal() {
+            if (!acessoCadastranteLiberado()) return;
             document.getElementById('recusa-modal').classList.remove('hidden');
         }
         function closeRecusaModal() {
@@ -1317,6 +1384,9 @@ Consulte os detalhes completos e homologue o cadastro pelo e-mail recebido.`;
             };
 
             cadastroAtivo = dados;
+            cadastranteVerificado = false;
+            document.getElementById('cadastrante_verificacao_email').value = "";
+            atualizarBloqueioAcoesCadastrante();
             
             document.getElementById('wf-empty-state').classList.add('hidden');
             document.getElementById('wf-active-state').classList.remove('hidden');
@@ -1380,6 +1450,7 @@ Consulte os detalhes completos e homologue o cadastro pelo e-mail recebido.`;
         // WORKFLOW ETAPA: CONFIRMAR ANÁLISE / RECEBIMENTO
         async function wfConfirmarRecebimento() {
             if (!cadastroAtivo) return;
+            if (!acessoCadastranteLiberado()) return;
             if (cadastroAtivo.status !== "SUBMETIDO") {
                 exibirToast("Alerta", "O chamado já está em análise ou finalizado.", "warning");
                 return;
@@ -1412,6 +1483,7 @@ Consulte os detalhes completos e homologue o cadastro pelo e-mail recebido.`;
 
         // WORKFLOW ETAPA: REGISTRAR INCONSISTÊNCIA E DEVOLVER
         async function submitRecusaWorkflow() {
+            if (!acessoCadastranteLiberado()) return;
             const motivo = document.getElementById('wf_recusa_motivo').value.trim();
             if (!motivo) {
                 exibirToast("Alerta", "Escreva a justificativa para a devolução.", "warning");
@@ -1520,6 +1592,7 @@ Consulte os detalhes completos e homologue o cadastro pelo e-mail recebido.`;
         // WORKFLOW ETAPA: CONCLUIR CADASTRO NO ERP
         async function wfConcluirCadastro() {
             if (!cadastroAtivo) return;
+            if (!acessoCadastranteLiberado()) return;
             if (cadastroAtivo.status === "SUBMETIDO") {
                 exibirToast("Alerta", "Você precisa iniciar a análise [Confirmar Análise] antes de finalizar.", "warning");
                 return;
@@ -1634,6 +1707,9 @@ Consulte os detalhes completos e homologue o cadastro pelo e-mail recebido.`;
             if (!item) return;
 
             cadastroAtivo = item;
+            cadastranteVerificado = false;
+            document.getElementById('cadastrante_verificacao_email').value = "";
+            atualizarBloqueioAcoesCadastrante();
 
             document.getElementById('sol_nome').value = item.sol_nome;
             document.getElementById('sol_setor').value = item.sol_setor;
@@ -1863,6 +1939,9 @@ Consulte os detalhes completos e homologue o cadastro pelo e-mail recebido.`;
         function limparFormulario() {
             document.getElementById('cadastroForm').reset();
             cadastroAtivo = null;
+            cadastranteVerificado = false;
+            document.getElementById('cadastrante_verificacao_email').value = "";
+            atualizarBloqueioAcoesCadastrante();
             document.getElementById('btn_submit_workflow').classList.remove('hidden');
             document.getElementById('btn_resubmit_adjustments').classList.add('hidden');
             document.getElementById('btn_cancel_edit').classList.add('hidden');
@@ -1897,9 +1976,12 @@ Consulte os detalhes completos e homologue o cadastro pelo e-mail recebido.`;
         // tela). É o método usado para o PDF anexado nos e-mails automáticos: mais confiável
         // que capturar a página, porque não depende de fontes/CSS terminarem de carregar.
         function gerarPdfProgramatico(dados) {
-            const jsPDFCtor = (window.jspdf && window.jspdf.jsPDF) || window.jsPDF;
+            const jsPDFCtor = (window.jspdf && window.jspdf.jsPDF) || window.jsPDF || (window.jspdf && window.jspdf.default);
             if (!jsPDFCtor) {
-                console.error("jsPDF não encontrado no escopo global (window.jspdf.jsPDF / window.jsPDF ausentes).");
+                console.error(
+                    "jsPDF não encontrado no escopo global. Debug -> window.jspdf:", window.jspdf,
+                    "| window.jsPDF:", window.jsPDF
+                );
                 exibirToast("Erro ao gerar PDF", "A biblioteca de geração de PDF não carregou corretamente. Recarregue a página e tente novamente.", "warning");
                 return null;
             }
