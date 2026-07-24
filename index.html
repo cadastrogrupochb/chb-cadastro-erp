@@ -1331,7 +1331,7 @@ Consulte os detalhes completos e homologue o cadastro pelo e-mail recebido.`;
             await aplicarAssinaturaNoPreview(dados.assinatura_dataurl);
             atualizarPreview();
             await aguardarRenderizacao();
-            const pdfBlob = await gerarPdfBlob();
+            const pdfBlob = gerarPdfProgramatico(dados);
             const pdfNome = `CHB_Cadastro_${dados.peca_codigo}.pdf`;
             if (!pdfBlob) {
                 addLog("Não foi possível gerar o PDF automaticamente; e-mails seguiram sem anexo.", "warning");
@@ -1393,7 +1393,7 @@ Consulte os detalhes completos e homologue o cadastro pelo e-mail recebido.`;
             await aplicarAssinaturaNoPreview(cadastroAtivo.assinatura_dataurl);
             atualizarPreview();
             await aguardarRenderizacao();
-            const pdfRecebimento = await gerarPdfBlob();
+            const pdfRecebimento = gerarPdfProgramatico(cadastroAtivo);
             const okRecebimento = await enviarEmailFormatado(
                 cadastroAtivo.sol_email,
                 `[Grupo CHB] Chamado em Análise ERP: Recebimento Confirmado - ${cadastroAtivo.peca_codigo}`,
@@ -1432,7 +1432,7 @@ Consulte os detalhes completos e homologue o cadastro pelo e-mail recebido.`;
             await aplicarAssinaturaNoPreview(cadastroAtivo.assinatura_dataurl);
             atualizarPreview();
             await aguardarRenderizacao();
-            const pdfDevolucao = await gerarPdfBlob();
+            const pdfDevolucao = gerarPdfProgramatico(cadastroAtivo);
             const okDevolucao = await enviarEmailFormatado(
                 cadastroAtivo.sol_email,
                 `[Grupo CHB] ⚠️ AJUSTE REQUERIDO: Inconsistência no Cadastro - ${cadastroAtivo.peca_codigo}`,
@@ -1500,7 +1500,7 @@ Consulte os detalhes completos e homologue o cadastro pelo e-mail recebido.`;
 
             exibirToast("Cadastro Reenviado", "Notificando cadastrante sobre as correções...", "info");
 
-            const pdfAjuste = await gerarPdfBlob();
+            const pdfAjuste = gerarPdfProgramatico(cadastroAtivo);
             const okAjuste = await enviarEmailFormatado(
                 cadastroAtivo.cad_email,
                 `[Grupo CHB] AJUSTADO: Cadastro de Item corrigido - ${cadastroAtivo.peca_codigo}`,
@@ -1537,7 +1537,7 @@ Consulte os detalhes completos e homologue o cadastro pelo e-mail recebido.`;
             await aplicarAssinaturaNoPreview(cadastroAtivo.assinatura_dataurl);
             atualizarPreview();
             await aguardarRenderizacao();
-            const pdfConclusao = await gerarPdfBlob();
+            const pdfConclusao = gerarPdfProgramatico(cadastroAtivo);
             const okConclusao = await enviarEmailFormatado(
                 cadastroAtivo.sol_email,
                 `[Grupo CHB] CONCLUÍDO: Item parametrizado com sucesso - ${cadastroAtivo.peca_codigo}`,
@@ -1891,6 +1891,142 @@ Consulte os detalhes completos e homologue o cadastro pelo e-mail recebido.`;
         }
 
         // GERA O PDF DO CADASTRO EM MEMÓRIA (BLOB) PARA ANEXAR AO E-MAIL DE SOLICITAÇÃO
+        // GERA O PDF DO CADASTRO DESENHANDO DIRETAMENTE COM jsPDF (sem depender de "foto" da
+        // tela). É o método usado para o PDF anexado nos e-mails automáticos: mais confiável
+        // que capturar a página, porque não depende de fontes/CSS terminarem de carregar.
+        function gerarPdfProgramatico(dados) {
+            const jsPDFCtor = (window.jspdf && window.jspdf.jsPDF) || window.jsPDF;
+            if (!jsPDFCtor) {
+                console.error("jsPDF não encontrado no escopo global.");
+                return null;
+            }
+
+            try {
+                const pdf = new jsPDFCtor({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+                const azul = [30, 58, 138];
+                const cinzaEscuro = [30, 41, 59];
+                const cinzaClaro = [100, 116, 139];
+                const margemEsq = 15;
+                const larguraUtil = 180;
+                let y = 22;
+
+                pdf.setFillColor(azul[0], azul[1], azul[2]);
+                pdf.rect(0, 0, 210, 3, 'F');
+
+                pdf.setFont('helvetica', 'bold');
+                pdf.setFontSize(20);
+                pdf.setTextColor(azul[0], azul[1], azul[2]);
+                pdf.text('GRUPO CHB', margemEsq, y);
+
+                pdf.setFont('helvetica', 'normal');
+                pdf.setFontSize(8);
+                pdf.setTextColor(cinzaClaro[0], cinzaClaro[1], cinzaClaro[2]);
+                pdf.text('SISTEMAS E TECNOLOGIA', margemEsq, y + 5);
+
+                pdf.setFont('helvetica', 'bold');
+                pdf.setFontSize(9);
+                pdf.setTextColor(cinzaEscuro[0], cinzaEscuro[1], cinzaEscuro[2]);
+                pdf.text('FILA DE CADASTRO ERP', 195, y - 3, { align: 'right' });
+                pdf.setFont('helvetica', 'normal');
+                pdf.setFontSize(7);
+                pdf.setTextColor(azul[0], azul[1], azul[2]);
+                pdf.text('SISTEMAS E TECNOLOGIA', 195, y + 1, { align: 'right' });
+
+                y += 10;
+                pdf.setDrawColor(226, 232, 240);
+                pdf.line(margemEsq, y, 195, y);
+                y += 8;
+
+                function secaoTitulo(texto) {
+                    pdf.setFont('helvetica', 'bold');
+                    pdf.setFontSize(9);
+                    pdf.setTextColor(cinzaEscuro[0], cinzaEscuro[1], cinzaEscuro[2]);
+                    pdf.text(texto, margemEsq, y);
+                    y += 1.5;
+                    pdf.setDrawColor(226, 232, 240);
+                    pdf.line(margemEsq, y, 195, y);
+                    y += 6;
+                }
+
+                function campo(label, valor) {
+                    pdf.setFont('helvetica', 'bold');
+                    pdf.setFontSize(7);
+                    pdf.setTextColor(cinzaClaro[0], cinzaClaro[1], cinzaClaro[2]);
+                    pdf.text(label.toUpperCase(), margemEsq, y);
+                    y += 4;
+                    pdf.setFont('helvetica', 'normal');
+                    pdf.setFontSize(9.5);
+                    pdf.setTextColor(cinzaEscuro[0], cinzaEscuro[1], cinzaEscuro[2]);
+                    const linhas = pdf.splitTextToSize(String(valor || '-'), larguraUtil);
+                    pdf.text(linhas, margemEsq, y);
+                    y += (linhas.length * 4.5) + 4;
+                }
+
+                secaoTitulo('I. INFORMAÇÕES CORPORATIVAS DO SOLICITANTE');
+                campo('Solicitante', `${dados.sol_nome} \u2014 ${dados.sol_setor} / ${dados.sol_funcao}`);
+                campo('Unidade (Filial)', dados.sol_unidade);
+                campo('E-mail de Contato', dados.sol_email);
+                campo('Data/Hora de Registro', dados.timestamp_br);
+
+                secaoTitulo('II. DETALHES TÉCNICOS DO EQUIPAMENTO/ITEM');
+                campo('Código do Item / Fabricante', dados.peca_codigo);
+                campo('Marca / Fabricante', dados.peca_marca);
+                campo('Prazo para Cadastro', dados.peca_prazo);
+                campo('Descrição do Item do Fabricante', dados.peca_descricao);
+                campo('Aplicação do Item / Compatibilidade', dados.peca_aplicacao);
+                campo('Sistemas de Destino', `SYS: ${dados.dest_sys} | TRACTIAN: ${dados.dest_trac} | IOB: ${dados.dest_iob}`);
+
+                if (dados.dest_iob === 'SIM') {
+                    campo('NCM (IOB)', dados.iob_ncm);
+                    campo('Preço Comercial (IOB)', dados.iob_preco && dados.iob_preco !== '-' ? `R$ ${dados.iob_preco}` : '-');
+                    campo('Quantidade / Filial Cadastro (IOB)', `${dados.iob_qtd || '-'} / ${dados.iob_filial || '-'}`);
+                }
+
+                if (dados.peca_obs && dados.peca_obs !== 'Nenhuma') {
+                    campo('Observações / Adendo', dados.peca_obs);
+                }
+
+                secaoTitulo('III. TERMO DE RESPONSABILIDADE');
+                pdf.setFont('helvetica', 'normal');
+                pdf.setFontSize(8);
+                pdf.setTextColor(cinzaClaro[0], cinzaClaro[1], cinzaClaro[2]);
+                const termo = 'Declaro que as especificações enviadas acima são fidedignas e correspondem fielmente ao item solicitado para homologação e cadastro no sistema integrado ERP do Grupo CHB. O prazo limite indicado será considerado para fins de planejamento de compras, suprimentos e engenharia.';
+                const linhasTermo = pdf.splitTextToSize(termo, larguraUtil);
+                pdf.text(linhasTermo, margemEsq, y);
+                y += linhasTermo.length * 4 + 10;
+
+                const yAssinatura = Math.min(Math.max(y, 245), 265);
+                if (dados.assinatura_dataurl) {
+                    try {
+                        pdf.addImage(dados.assinatura_dataurl, 'PNG', margemEsq + 10, yAssinatura - 18, 60, 16);
+                    } catch (e) {
+                        console.error('Falha ao inserir assinatura no PDF: ', e);
+                    }
+                }
+                pdf.setDrawColor(148, 163, 184);
+                pdf.line(margemEsq, yAssinatura, margemEsq + 80, yAssinatura);
+                pdf.line(110, yAssinatura, 190, yAssinatura);
+                pdf.setFont('helvetica', 'bold');
+                pdf.setFontSize(8);
+                pdf.setTextColor(cinzaEscuro[0], cinzaEscuro[1], cinzaEscuro[2]);
+                pdf.text('Assinatura do Solicitante', margemEsq, yAssinatura + 4);
+                pdf.text('Responsável pelo Cadastro (Cadastrante)', 110, yAssinatura + 4);
+
+                pdf.setDrawColor(226, 232, 240);
+                pdf.line(margemEsq, 280, 195, 280);
+                pdf.setFont('helvetica', 'normal');
+                pdf.setFontSize(7);
+                pdf.setTextColor(cinzaClaro[0], cinzaClaro[1], cinzaClaro[2]);
+                pdf.text('Documento técnico de especificação para homologação interna.', margemEsq, 285);
+                pdf.text(`Chamado ${dados.id} \u2014 Grupo CHB Sistemas ERP \u00A9 2026`, 195, 285, { align: 'right' });
+
+                return pdf.output('blob');
+            } catch (e) {
+                console.error("Falha ao gerar PDF programático: ", e);
+                return null;
+            }
+        }
+
         async function gerarPdfBlob() {
             const element = document.getElementById('pdf-a4-page');
 
