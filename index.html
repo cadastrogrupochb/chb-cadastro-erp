@@ -12,6 +12,8 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <!-- Biblioteca html2pdf para geração física de PDF -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+    <!-- jsPDF carregado de forma independente (garante window.jspdf.jsPDF disponível para geração de PDF sem depender de captura de tela) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <!-- Biblioteca SheetJS (xlsx) para exportação do histórico em Excel -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
@@ -1897,7 +1899,8 @@ Consulte os detalhes completos e homologue o cadastro pelo e-mail recebido.`;
         function gerarPdfProgramatico(dados) {
             const jsPDFCtor = (window.jspdf && window.jspdf.jsPDF) || window.jsPDF;
             if (!jsPDFCtor) {
-                console.error("jsPDF não encontrado no escopo global.");
+                console.error("jsPDF não encontrado no escopo global (window.jspdf.jsPDF / window.jsPDF ausentes).");
+                exibirToast("Erro ao gerar PDF", "A biblioteca de geração de PDF não carregou corretamente. Recarregue a página e tente novamente.", "warning");
                 return null;
             }
 
@@ -2020,7 +2023,12 @@ Consulte os detalhes completos e homologue o cadastro pelo e-mail recebido.`;
                 pdf.text('Documento técnico de especificação para homologação interna.', margemEsq, 285);
                 pdf.text(`Chamado ${dados.id} \u2014 Grupo CHB Sistemas ERP \u00A9 2026`, 195, 285, { align: 'right' });
 
-                return pdf.output('blob');
+                const blob = pdf.output('blob');
+                if (!blob || blob.size < 1000) {
+                    console.warn("PDF gerado parece vazio/pequeno demais (bytes):", blob ? blob.size : 0);
+                    exibirToast("Aviso", "O PDF gerado parece estar vazio. Verifique o console (F12) para detalhes.", "warning");
+                }
+                return blob;
             } catch (e) {
                 console.error("Falha ao gerar PDF programático: ", e);
                 return null;
